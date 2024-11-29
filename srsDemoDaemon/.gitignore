@@ -1,0 +1,67 @@
+# Ignore Visual Studio files
+.vs/
+.vscode/
+.idea/
+# User-specific files
+.vsconfig
+# User-specific files for Visual Studio (Windows only)
+*.user
+*.userosscache
+*.suo
+*.userprefs
+
+# Build directories
+[Dd]ebug/
+[Dd]ebugAll/
+[Dd]ebug_x86/
+[Dd]ebug_x64/
+[Dd]ebug_AnyCPU/
+[Dd]evelopment/
+[Dd]ebug_ARM/
+[Dd]ebug_x86_AnyCPU/
+[Dd]ebug_x64_AnyCPU/
+
+# Output directories
+[Dd]ist/
+[Dd]istros/
+build/
+out/
+
+# Object files
+*.obj
+*.pch
+*.idb
+*.pdb
+
+# Compiled binary files
+*.exe
+*.dll
+*.lib
+*.so
+*.dylib
+
+# Ignore temp files
+*.tmp
+*.bak
+*.swp
+
+# Ignore NuGet files
+*.nupkg
+.nuget/
+
+# Ignore package lock files
+npm-debug.log
+yarn-debug.log
+yarn-error.log
+
+# Ignore other IDE specific files
+.idea/
+*.iml
+
+# Ignore CMake files (if using CMake)
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+*.cmake
+Makefile
+Makefile.user
