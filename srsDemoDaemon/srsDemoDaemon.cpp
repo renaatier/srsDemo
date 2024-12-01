@@ -88,7 +88,6 @@ void run_server() {
             }
         }
 
-        // Ensure the PDCurses thread is joined before exiting
         curses_thread.join();
     }
     catch (exception& e) {
@@ -100,7 +99,7 @@ void run_curses_menu(DatabaseManager& dbManager, websocket::stream<asio::ip::tcp
     initscr();
     noecho();
     cbreak();
-    keypad(stdscr, TRUE);  // Enable keypad input for special keys
+    keypad(stdscr, TRUE);
 
     vector<string> fileList = dbManager.getFileList();
     int choice = 0;
@@ -133,7 +132,8 @@ void run_curses_menu(DatabaseManager& dbManager, websocket::stream<asio::ip::tcp
             choice = highlight;
             {
                 string selectedFile = fileList[choice];
-                json request = { {"getFileByName", selectedFile} };
+                string svgData = dbManager.getSVG(selectedFile);
+                json request = { {"svgData", svgData} };
                 ws.write(asio::buffer(request.dump()));
                 mvprintw(fileList.size() + 2, 0, ("Requested file: " + selectedFile).c_str());
             }
