@@ -1,26 +1,20 @@
 #ifndef DATABASEMANAGER_H
 #define DATABASEMANAGER_H
 
-//Why won't it compile without this?
-#define SQLITECPP_COMPILE_DLL
-
 #include <string>
 #include <vector>
-#include <SQLiteCpp/SQLiteCpp.h>
-
-using namespace std;
 
 class DatabaseManager {
 public:
-    DatabaseManager(const string& dbPath);
+    DatabaseManager(const std::string& dbPath);
     ~DatabaseManager();
 
-    void saveSVG(const string& fileName, const string& svgData);
-    string getSVG(const string& fileName);
-    vector<string> getFileList();
+    void saveSVG(const std::string& fileName, const std::vector<unsigned char>& svgData);
+    std::vector<unsigned char> getSVG(const std::string& fileName);
+    std::vector<std::string> getFileList();
 
 private:
-    string databasePath;
+    std::string databasePath;
     void initializeDatabase();
 };
 

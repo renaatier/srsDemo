@@ -1,3 +1,15 @@
+v0.2
+Changes:
+-Cross platform support, removed all Windows specific stuff
+-More robust daemon with data checks, error handling, logging
+-Rewrote React code to fix issue with context being lost after updating the canvas
+-Replaced boost with uwebsockets and sqlitecpp with sqlite3
+-Removed loading files from curses from server, it was just used for practice anyway
+
+
+
+
+v0.1
 # srsDemo
 A simple client-server application for SVG editing. 
 The server is implemented in C++ with WebSocket support, and the client is built using React.

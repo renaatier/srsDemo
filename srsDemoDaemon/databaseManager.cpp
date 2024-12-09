@@ -1,114 +1,165 @@
 #include "DatabaseManager.h"
+#include <sqlite3.h>
 #include <iostream>
+#include <sstream>
+#include <stdexcept>
 #include <vector>
 
-DatabaseManager::DatabaseManager(const std::string& dbPath)
-    : databasePath(dbPath)
+DatabaseManager::DatabaseManager(const std::string& dbPath) : databasePath(dbPath)
 {
     initializeDatabase();
 }
 
-DatabaseManager::~DatabaseManager() {}
+DatabaseManager::~DatabaseManager() = default;
 
 void DatabaseManager::initializeDatabase()
 {
-    try 
+    sqlite3* db = nullptr;
+
+    if (sqlite3_open(databasePath.c_str(), &db) != SQLITE_OK)
     {
-        SQLite::Database db(databasePath, SQLite::OPEN_READWRITE | SQLite::OPEN_CREATE);
-
-        const std::string createTableSQL = R"(
-            CREATE TABLE IF NOT EXISTS svg_data (
-                fileName TEXT PRIMARY KEY,
-                svgData TEXT NOT NULL,
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-            );
-        )";
-
-        db.exec(createTableSQL);
-        std::cout << "Database initialized successfully." << std::endl;
+        std::ostringstream errMsg;
+        errMsg << "Error opening database: " << sqlite3_errmsg(db);
+        sqlite3_close(db);
+        throw std::runtime_error(errMsg.str());
     }
-    catch (const std::exception& e) {
-        std::cerr << "Error initializing database: " << e.what() << std::endl;
+
+    const char* createTableSQL = R"(
+        CREATE TABLE IF NOT EXISTS svg_data (
+            fileName TEXT PRIMARY KEY,
+            svgData BLOB NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+    )";
+
+    char* errorMessage = nullptr;
+    if (sqlite3_exec(db, createTableSQL, nullptr, nullptr, &errorMessage) != SQLITE_OK)
+    {
+        std::ostringstream errMsg;
+        errMsg << "Error creating table: " << errorMessage;
+        sqlite3_free(errorMessage);
+        sqlite3_close(db);
+        throw std::runtime_error(errMsg.str());
     }
+
+    sqlite3_close(db);
 }
 
-void DatabaseManager::saveSVG(const std::string& fileName, const std::string& svgData)
+void DatabaseManager::saveSVG(const std::string& fileName, const std::vector<unsigned char>& svgData) 
 {
-    try 
+    if (fileName.empty() || svgData.empty())
     {
-        SQLite::Database db(databasePath, SQLite::OPEN_READWRITE);
-
-        const std::string insertSQL = R"(
-            INSERT OR REPLACE INTO svg_data (fileName, svgData) 
-            VALUES (?, ?);
-        )";
-
-        SQLite::Statement query(db, insertSQL);
-        query.bind(1, fileName);
-        query.bind(2, svgData);
-
-        query.exec();
-        std::cout << "SVG data saved successfully with fileName: " << fileName << std::endl;
+        throw std::invalid_argument("File name or SVG data cannot be empty.");
     }
-    catch (const std::exception& e) 
+
+    sqlite3* db = nullptr;
+    if (sqlite3_open(databasePath.c_str(), &db) != SQLITE_OK)
     {
-        std::cerr << "Error saving SVG data: " << e.what() << std::endl;
+        throw std::runtime_error("Error opening database: " + std::string(sqlite3_errmsg(db)));
     }
+
+    const char* insertSQL = R"(
+        INSERT OR REPLACE INTO svg_data (fileName, svgData)
+        VALUES (?, ?);
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        sqlite3_close(db);
+        throw std::runtime_error("Error preparing statement: " + std::string(sqlite3_errmsg(db)));
+    }
+
+    sqlite3_bind_text(stmt, 1, fileName.c_str(), -1, SQLITE_STATIC);
+    sqlite3_bind_blob(stmt, 2, svgData.data(), (int)svgData.size(), SQLITE_STATIC);
+
+    if (sqlite3_step(stmt) != SQLITE_DONE)
+    {
+        std::ostringstream errMsg;
+        errMsg << "Error executing statement: " << sqlite3_errmsg(db);
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        throw std::runtime_error(errMsg.str());
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
 }
 
-std::string DatabaseManager::getSVG(const std::string& fileName)
+std::vector<unsigned char> DatabaseManager::getSVG(const std::string& fileName)
 {
-    try {
-        SQLite::Database db(databasePath, SQLite::OPEN_READONLY);
-
-        const std::string selectSQL = R"(
-            SELECT svgData FROM svg_data WHERE fileName = ?;
-        )";
-
-        SQLite::Statement query(db, selectSQL);
-        query.bind(1, fileName);
-
-        if (query.executeStep()) 
-        {
-            return query.getColumn(0).getString();
-        }
-        else 
-        {
-            std::cerr << "No SVG data found for fileName: " << fileName << std::endl;
-        }
-    }
-    catch (const std::exception& e) 
+    if (fileName.empty())
     {
-        std::cerr << "Error retrieving SVG data: " << e.what() << std::endl;
+        throw std::invalid_argument("File name cannot be empty.");
     }
 
-    return "";
+    sqlite3* db = nullptr;
+    if (sqlite3_open(databasePath.c_str(), &db) != SQLITE_OK)
+    {
+        throw std::runtime_error("Error opening database: " + std::string(sqlite3_errmsg(db)));
+    }
+
+    const char* selectSQL = R"(
+        SELECT svgData FROM svg_data WHERE fileName = ?;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, selectSQL, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        sqlite3_close(db);
+        throw std::runtime_error("Error preparing statement: " + std::string(sqlite3_errmsg(db)));
+    }
+
+    sqlite3_bind_text(stmt, 1, fileName.c_str(), -1, SQLITE_STATIC);
+
+    std::vector<unsigned char> svgData;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        const void* blobData = sqlite3_column_blob(stmt, 0);
+        int blobSize = sqlite3_column_bytes(stmt, 0);
+        svgData.assign(static_cast<const unsigned char*>(blobData), static_cast<const unsigned char*>(blobData) + blobSize);
+    }
+    else
+    {
+        sqlite3_finalize(stmt);
+        sqlite3_close(db);
+        throw std::runtime_error("No SVG data found for fileName: " + fileName);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
+
+    return svgData;
 }
 
-vector<string> DatabaseManager::getFileList()
+std::vector<std::string> DatabaseManager::getFileList()
 {
-    vector<string> fileList;
-
-    try
+    sqlite3* db = nullptr;
+    if (sqlite3_open(databasePath.c_str(), &db) != SQLITE_OK)
     {
-        SQLite::Database db(databasePath, SQLite::OPEN_READONLY);
-
-        const std::string selectSQL = R"(
-            SELECT fileName FROM svg_data ORDER BY timestamp DESC;
-        )";
-
-        SQLite::Statement query(db, selectSQL);
-
-        while (query.executeStep())
-        {
-            fileList.push_back(query.getColumn(0).getString());
-        }
-
+        throw std::runtime_error("Error opening database: " + std::string(sqlite3_errmsg(db)));
     }
-    catch (const std::exception& e)
+
+    const char* selectSQL = R"(
+        SELECT fileName FROM svg_data ORDER BY timestamp DESC;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, selectSQL, -1, &stmt, nullptr) != SQLITE_OK)
     {
-        std::cerr << "Error retrieving file list: " << e.what() << std::endl;
+        sqlite3_close(db);
+        throw std::runtime_error("Error preparing statement: " + std::string(sqlite3_errmsg(db)));
     }
+
+    std::vector<std::string> fileList;
+    while (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        const char* fileName = reinterpret_cast<const char*>(sqlite3_column_text(stmt, 0));
+        fileList.emplace_back(fileName);
+    }
+
+    sqlite3_finalize(stmt);
+    sqlite3_close(db);
 
     return fileList;
 }

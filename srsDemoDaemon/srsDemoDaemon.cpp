@@ -1,151 +1,180 @@
 #include "DatabaseManager.h"
-#include <boost/beast/websocket.hpp>
-#include <boost/beast/core.hpp>
-#include <boost/asio.hpp>
-#include <iostream>
+#include <uwebsockets/App.h>
 #include <nlohmann/json.hpp>
+#include <tinyxml2.h>
+#include <iostream>
+#include <stdexcept>
+#include <string>
 #include <vector>
-#include <thread>
-#include <chrono>
-#include <curses.h>
+#include <fstream>
 
-
-namespace asio = boost::asio;
-namespace beast = boost::beast;
-namespace websocket = beast::websocket;
-
-using namespace std;
 using json = nlohmann::json;
 
-void run_server();
-void run_curses_menu(DatabaseManager& dbManager, websocket::stream<asio::ip::tcp::socket>& ws);
+//Purposefully empty
+struct PerConnectionData {};
 
-int main() {
-    run_server();
-    return 0;
+std::string getCurrentTimestamp()
+{
+    std::time_t now = std::time(nullptr);
+    char buffer[100];
+    std::strftime(buffer, sizeof(buffer), "%Y-%m-%d %H:%M:%S", std::localtime(&now));
+    return std::string(buffer);
 }
 
-void run_server() {
-    try {
+void logMessage(const std::string& message, bool isError = false)
+{
+    static std::ofstream logFile("logfile.txt", std::ios::app); // Open log file in append mode
+
+    if (!logFile.is_open())
+    {
+        std::cerr << "Failed to open logfile.txt for logging." << std::endl;
+        return;
+    }
+
+    std::string timestampedMessage = "[" + getCurrentTimestamp() + "] " + (isError ? "!!! " : "") + message;
+
+    if (isError)
+    {
+        std::cerr << timestampedMessage << std::endl;
+    }
+    else
+    {
+        std::cout << timestampedMessage << std::endl;
+    }
+
+    logFile << timestampedMessage << std::endl;
+}
+
+bool validateXML(const std::string& xmlData)
+{
+    tinyxml2::XMLDocument doc;
+    return doc.Parse(xmlData.c_str()) == tinyxml2::XML_SUCCESS;
+}
+
+void handleSaveSVG(DatabaseManager& dbManager, const json& payload, auto* ws)
+{
+    std::string fileName = payload["fileName"];
+    std::string svgData = payload["svgData"];
+
+    if (validateXML(svgData))
+    {
+        dbManager.saveSVG(fileName, std::vector<unsigned char>(svgData.begin(), svgData.end()));
+        logMessage("SVG data saved successfully: " + fileName);
+        ws->send("SVG saved successfully.");
+    }
+    else
+    {
+        logMessage("Invalid XML format for file: " + fileName, true);
+        ws->send(R"({"error": "Invalid XML format."})");
+    }
+}
+
+void handleGetFileList(DatabaseManager& dbManager, auto* ws)
+{
+    std::vector<std::string> fileList = dbManager.getFileList();
+    json response = { {"fileList", fileList} };
+    ws->send(response.dump());
+    logMessage("File list sent to the client.");
+}
+
+void handleGetSVG(DatabaseManager& dbManager, const json& payload, auto* ws)
+{
+    std::string fileName = payload["getFileByName"];
+    try
+    {
+        std::vector<unsigned char> svgData = dbManager.getSVG(fileName);
+        std::string svgDataStr(svgData.begin(), svgData.end());
+        json response = { {"svgData", svgDataStr} };
+        ws->send(response.dump());
+        logMessage("SVG data for " + fileName + " sent to the client.");
+    }
+    catch (const std::runtime_error& e)
+    {
+        logMessage("Error retrieving SVG: " + std::string(e.what()), true);
+        ws->send(R"({"error": "File not found."})");
+    }
+}
+
+void handleMessage(DatabaseManager& dbManager, std::string_view message, auto* ws)
+{
+    try
+    {
+        auto payload = json::parse(message);
+
+        if (payload.contains("fileName") && payload.contains("svgData"))
+        {
+            handleSaveSVG(dbManager, payload, ws);
+        }
+        else if (payload.contains("getFileList"))
+        {
+            handleGetFileList(dbManager, ws);
+        }
+        else if (payload.contains("getFileByName"))
+        {
+            handleGetSVG(dbManager, payload, ws);
+        }
+        else
+        {
+            ws->send(R"({"error": "Invalid request."})");
+            logMessage("Invalid payload received.", true);
+        }
+    }
+    catch (const json::exception& e)
+    {
+        logMessage("JSON parsing error: " + std::string(e.what()), true);
+        ws->send(R"({"error": "Error parsing JSON."})");
+    }
+    catch (const std::exception& e)
+    {
+        logMessage("Unexpected error: " + std::string(e.what()), true);
+        ws->send(R"({"error": "Internal server error."})");
+    }
+}
+
+void run_server()
+{
+    try
+    {
         DatabaseManager dbManager("svg_database.db");
 
-        asio::io_context ioc;
-        asio::ip::tcp::acceptor acceptor(ioc, asio::ip::tcp::endpoint(asio::ip::tcp::v4(), 8080));
-        asio::ip::tcp::socket socket(ioc);
-
-        cout << "Waiting for connection on localhost:8080..." << endl;
-        acceptor.accept(socket);
-
-        websocket::stream<asio::ip::tcp::socket> ws(move(socket));
-        ws.accept();
-
-        //Launch curses menu in a separate thread
-        thread curses_thread(run_curses_menu, ref(dbManager), ref(ws));
-
-        while (true) {
-            beast::flat_buffer buffer;
-            cout << "Waiting for bytes..." << endl;
-            ws.read(buffer);
-
-            string received_data = beast::buffers_to_string(buffer.data());
-            cout << "Received data: " << received_data << endl;
-
-            try {
-                auto payload = json::parse(received_data);
-
-                if (payload.contains("fileName") && payload.contains("svgData")) {
-                    string fileName = payload["fileName"];
-                    string svgData = payload["svgData"];
-                    dbManager.saveSVG(fileName, svgData);
-                    cout << "Data saved to database successfully." << endl;
+        uWS::App()
+            .ws<PerConnectionData>("/*", {
+                .open = [](auto* ws)
+                {
+                    logMessage("Connection opened.");
+                },
+                .message = [&dbManager](auto* ws, std::string_view message, uWS::OpCode opCode)
+                {
+                    logMessage("Received message: " + std::string(message));
+                    handleMessage(dbManager, message, ws);
+                },
+                .close = [](auto* ws, int code, std::string_view message)
+                {
+                    logMessage("Connection closed. Code: " + std::to_string(code) + ", Message: " + std::string(message));
                 }
-                else if (payload.contains("getFileList")) {
-                    vector<string> fileList = dbManager.getFileList();
-                    json response = { {"fileList", fileList} };
-                    ws.write(boost::asio::buffer(response.dump()));
-                    cout << "File list sent to the client." << endl;
-                }
-                else if (payload.contains("getFileByName")) {
-                    string fileName = payload["getFileByName"];
-                    string svgData = dbManager.getSVG(fileName);
-                    if (!svgData.empty()) {
-                        json response = { {"svgData", svgData} };
-                        ws.write(boost::asio::buffer(response.dump()));
-                        cout << "SVG data for " << fileName << " sent to the client." << endl;
+                })
+            .listen(8080, [](auto* token)
+                {
+                    if (token)
+                    {
+                        logMessage("Server listening on port 8080.");
                     }
-                    else {
-                        json response = { {"error", "File not found"} };
-                        ws.write(boost::asio::buffer(response.dump()));
-                        cout << "Error: File not found." << endl;
+                    else
+                    {
+                        logMessage("Failed to bind server to port 8080.", true);
+                        throw std::runtime_error("Unable to bind server to port.");
                     }
-                }
-                else {
-                    cerr << "Invalid payload received." << endl;
-                }
-            }
-            catch (const json::exception& e) {
-                cerr << "JSON parsing error: " << e.what() << endl;
-            }
-        }
-
-        curses_thread.join();
+                })
+            .run();
     }
-    catch (exception& e) {
-        cerr << "Error: " << e.what() << endl;
+    catch (const std::exception& e)
+    {
+        logMessage("Fatal error: " + std::string(e.what()), true);
     }
 }
 
-void run_curses_menu(DatabaseManager& dbManager, websocket::stream<asio::ip::tcp::socket>& ws) {
-    initscr();
-    noecho();
-    cbreak();
-    keypad(stdscr, TRUE);
-
-    vector<string> fileList = dbManager.getFileList();
-    int choice = 0;
-    int highlight = 0;
-
-    while (true) {
-        clear();
-        mvprintw(0, 0, "PDCurses Menu - Select a File to Load");
-
-        for (size_t i = 0; i < fileList.size(); ++i) {
-            if (i == highlight) {
-                attron(A_REVERSE);
-            }
-            mvprintw(i + 1, 0, fileList[i].c_str());
-            if (i == highlight) {
-                attroff(A_REVERSE);
-            }
-        }
-
-        int input = getch();
-
-        switch (input) {
-        case KEY_UP:
-            if (highlight > 0) highlight--;
-            break;
-        case KEY_DOWN:
-            if (highlight < fileList.size() - 1) highlight++;
-            break;
-        case 10:  //Enter key
-            choice = highlight;
-            {
-                string selectedFile = fileList[choice];
-                string svgData = dbManager.getSVG(selectedFile);
-                json request = { {"svgData", svgData} };
-                ws.write(asio::buffer(request.dump()));
-                mvprintw(fileList.size() + 2, 0, ("Requested file: " + selectedFile).c_str());
-            }
-            break;
-        default:
-            break;
-        }
-
-        if (input == 'q') {
-            break;
-        }
-    }
-
-    endwin();
+int main()
+{
+    run_server();
+    return 0;
 }
