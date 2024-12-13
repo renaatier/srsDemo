@@ -14,11 +14,13 @@ endif()
 
 set(SOURCES
     srsDemoDaemon.cpp
-    databaseManager.cpp
+    svgDatabaseManager.cpp
+    authDatabaseManager.cpp
 )
 
 set(HEADERS
-    databaseManager.h
+    svgDatabaseManager.h
+    authDatabaseManager.h
 )
 
 include_directories(${CMAKE_SOURCE_DIR})
@@ -29,12 +31,15 @@ find_package(uwebsockets CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 find_package(tinyxml2 CONFIG REQUIRED)
 find_package(SQLite3 REQUIRED)
+find_package(OpenSSL REQUIRED)
 
 target_link_libraries(${PROJECT_NAME}
     PRIVATE uwebsockets::uwebsockets
     PRIVATE nlohmann_json::nlohmann_json
     PRIVATE tinyxml2::tinyxml2
     PRIVATE SQLite::SQLite3
+    PRIVATE OpenSSL::Crypto
+    PRIVATE OpenSSL::SSL
 )
 
 if(WIN32)

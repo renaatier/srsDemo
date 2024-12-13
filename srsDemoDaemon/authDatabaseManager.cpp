@@ -53,21 +53,47 @@ bool AuthDatabaseManager::createUser(const std::string& userName, const std::str
         throw std::invalid_argument("User name or password cannot be empty.");
     }
 
-    std::string salt = generateSalt();
-    std::string hashedPassword = hashPassword(password, salt);
-
     sqlite3* db = nullptr;
     if (sqlite3_open(databasePath.c_str(), &db) != SQLITE_OK)
     {
         throw std::runtime_error("Error opening database: " + std::string(sqlite3_errmsg(db)));
     }
 
+    const char* checkUserSQL = R"(
+        SELECT COUNT(*) FROM users WHERE userName = ?;
+    )";
+
+    sqlite3_stmt* stmt = nullptr;
+    if (sqlite3_prepare_v2(db, checkUserSQL, -1, &stmt, nullptr) != SQLITE_OK)
+    {
+        sqlite3_close(db);
+        throw std::runtime_error("Error preparing statement: " + std::string(sqlite3_errmsg(db)));
+    }
+
+    sqlite3_bind_text(stmt, 1, userName.c_str(), -1, SQLITE_STATIC);
+
+    int userCount = 0;
+    if (sqlite3_step(stmt) == SQLITE_ROW)
+    {
+        userCount = sqlite3_column_int(stmt, 0);
+    }
+
+    sqlite3_finalize(stmt);
+
+    if (userCount > 0)
+    {
+        sqlite3_close(db);
+        return false;
+    }
+
+    std::string salt = generateSalt();
+    std::string hashedPassword = hashPassword(password, salt);
+
     const char* insertSQL = R"(
         INSERT INTO users (userName, password, salt)
         VALUES (?, ?, ?);
     )";
 
-    sqlite3_stmt* stmt = nullptr;
     if (sqlite3_prepare_v2(db, insertSQL, -1, &stmt, nullptr) != SQLITE_OK)
     {
         sqlite3_close(db);
@@ -82,7 +108,7 @@ bool AuthDatabaseManager::createUser(const std::string& userName, const std::str
     {
         sqlite3_finalize(stmt);
         sqlite3_close(db);
-        return false;
+        throw std::runtime_error("SQLite operation failed: " + std::string(sqlite3_errmsg(db)));
     }
 
     sqlite3_finalize(stmt);

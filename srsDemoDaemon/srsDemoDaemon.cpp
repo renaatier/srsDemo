@@ -133,6 +133,26 @@ void handleLogout(const json& payload, auto* ws)
     }
 }
 
+void handleCreateUser(AuthDatabaseManager& authDbManager, const json& payload, auto* ws)
+{
+    std::string username = payload["username"];
+    std::string password = payload["password"];
+
+    if (authDbManager.createUser(username, password))
+    {
+        std::string sessionID = generateSessionID();
+        addSession(sessionID, username);
+        json response = { {"sessionID", sessionID}, {"message", "Registration successful."} };
+        ws->send(response.dump());
+        logMessage("User " + username + " created successfully.");
+    }
+    else
+    {
+        ws->send(R"({"error": "User already exists."})");
+        logMessage("Failed registration attempt for user " + username, true);
+    }
+}
+
 void handleGetFileList(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
 {
     std::string sessionID = payload["sessionID"];
@@ -196,6 +216,10 @@ void handleMessage(SVGDatabaseManager& dbManager, AuthDatabaseManager& authDbMan
         else if (payload.contains("logout"))
         {
             handleLogout(payload, ws);
+        }
+        else if (payload.contains("createUser"))
+        {
+            handleCreateUser(authDbManager, payload, ws);
         }
         else if (payload.contains("getFileList"))
         {
