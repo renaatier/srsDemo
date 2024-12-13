@@ -16,7 +16,7 @@ const Rectangle = ({ shape, onUpdate }) => {
                 onMouseDown={handleDragStart}
                 onMouseMove={handleDragMove}
             />
-            {//corner resize}
+            {}
             {[{ dx: 1, dy: 1 }, { dx: 1, dy: -1 }, { dx: -1, dy: 1 }, { dx: -1, dy: -1 }].map((offset, index) => (
                 <circle
                     key={index}

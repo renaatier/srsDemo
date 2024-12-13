@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { w3cwebsocket as W3CWebSocket } from "websocket";
+import { useAuth } from "./AuthContext";
 
 const WebSocketContext = createContext();
 
@@ -7,6 +8,7 @@ export const WebSocketProvider = ({ children }) => {
     const [client, setClient] = useState(null);
     const [fileList, setFileList] = useState([]);
     const [svgData, setSvgData] = useState(null);
+    const { sessionId } = useAuth();
 
     useEffect(() => {
         const socket = new W3CWebSocket("ws://localhost:8080");
@@ -30,7 +32,7 @@ export const WebSocketProvider = ({ children }) => {
 
     const requestFileList = () => {
         if (client?.readyState === client.OPEN) {
-            client.send(JSON.stringify({ getFileList: "true" }));
+            client.send(JSON.stringify({ action: "getFileList", sessionId }));
         } else {
             console.error("WebSocket is not open.");
         }
@@ -38,7 +40,7 @@ export const WebSocketProvider = ({ children }) => {
 
     const requestSvgByFileName = (fileName) => {
         if (client?.readyState === client.OPEN) {
-            client.send(JSON.stringify({ getFileByName: fileName }));
+            client.send(JSON.stringify({ action: "getFileByName", fileName, sessionId }));
         } else {
             console.error("WebSocket is not open.");
         }

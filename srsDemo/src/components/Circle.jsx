@@ -15,7 +15,7 @@ const Circle = ({ shape, onUpdate }) => {
                 onMouseDown={handleDragStart}
                 onMouseMove={handleDragMove}
             />
-            {//resize}
+            {}
             <circle
                 cx={shape.x + shape.r}
                 cy={shape.y}

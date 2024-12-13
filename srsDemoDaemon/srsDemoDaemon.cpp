@@ -1,4 +1,5 @@
-#include "DatabaseManager.h"
+#include "SVGDatabaseManager.h"
+#include "AuthDatabaseManager.h"
 #include <uwebsockets/App.h>
 #include <nlohmann/json.hpp>
 #include <tinyxml2.h>
@@ -7,11 +8,14 @@
 #include <string>
 #include <vector>
 #include <fstream>
+#include <unordered_map>
+#include <mutex>
+#include <random>
 
 using json = nlohmann::json;
 
 //Purposefully empty
-struct PerConnectionData {};
+struct PerConnectionData{};
 
 std::string getCurrentTimestamp()
 {
@@ -23,7 +27,7 @@ std::string getCurrentTimestamp()
 
 void logMessage(const std::string& message, bool isError = false)
 {
-    static std::ofstream logFile("logfile.txt", std::ios::app); // Open log file in append mode
+    static std::ofstream logFile("logfile.txt", std::ios::app);
 
     if (!logFile.is_open())
     {
@@ -51,63 +55,151 @@ bool validateXML(const std::string& xmlData)
     return doc.Parse(xmlData.c_str()) == tinyxml2::XML_SUCCESS;
 }
 
-void handleSaveSVG(DatabaseManager& dbManager, const json& payload, auto* ws)
-{
-    std::string fileName = payload["fileName"];
-    std::string svgData = payload["svgData"];
+std::unordered_map<std::string, std::string> sessionStore;
+std::mutex sessionMutex;
 
-    if (validateXML(svgData))
+std::string generateSessionID()
+{
+    static std::random_device rd;
+    static std::mt19937 gen(rd());
+    static std::uniform_int_distribution<> dis(0, 15);
+
+    std::string sessionID(32, '0');
+    for (auto& c : sessionID)
     {
-        dbManager.saveSVG(fileName, std::vector<unsigned char>(svgData.begin(), svgData.end()));
-        logMessage("SVG data saved successfully: " + fileName);
-        ws->send("SVG saved successfully.");
+        c = "0123456789abcdef"[dis(gen)];
+    }
+    return sessionID;
+}
+
+void addSession(const std::string& sessionID, const std::string& username)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    sessionStore[sessionID] = username;
+}
+
+bool validateSession(const std::string& sessionID, std::string& username)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    auto it = sessionStore.find(sessionID);
+    if (it != sessionStore.end())
+    {
+        username = it->second;
+        return true;
+    }
+    return false;
+}
+
+void removeSession(const std::string& sessionID)
+{
+    std::lock_guard<std::mutex> lock(sessionMutex);
+    sessionStore.erase(sessionID);
+}
+
+void handleLogin(AuthDatabaseManager& authDbManager, const json& payload, auto* ws)
+{
+    std::string username = payload["username"];
+    std::string password = payload["password"];
+
+    if (authDbManager.validateUser(username, password))
+    {
+        std::string sessionID = generateSessionID();
+        addSession(sessionID, username);
+        json response = { {"sessionID", sessionID}, {"message", "Login successful"} };
+        ws->send(response.dump());
+        logMessage("User " + username + " logged in successfully.");
     }
     else
     {
-        logMessage("Invalid XML format for file: " + fileName, true);
-        ws->send(R"({"error": "Invalid XML format."})");
+        ws->send(R"({"error": "Invalid credentials"})");
+        logMessage("Failed login attempt for user " + username, true);
     }
 }
 
-void handleGetFileList(DatabaseManager& dbManager, auto* ws)
+void handleLogout(const json& payload, auto* ws)
 {
-    std::vector<std::string> fileList = dbManager.getFileList();
-    json response = { {"fileList", fileList} };
-    ws->send(response.dump());
-    logMessage("File list sent to the client.");
+    std::string sessionID = payload["sessionID"];
+
+    if (!sessionID.empty())
+    {
+        removeSession(sessionID);
+        ws->send(R"({"message": "Logout successful"})");
+        logMessage("Session " + sessionID + " logged out.");
+    }
+    else
+    {
+        ws->send(R"({"error": "Invalid session"})");
+        logMessage("Logout attempt failed due to missing session ID.", true);
+    }
 }
 
-void handleGetSVG(DatabaseManager& dbManager, const json& payload, auto* ws)
+void handleGetFileList(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
 {
-    std::string fileName = payload["getFileByName"];
-    try
+    std::string sessionID = payload["sessionID"];
+    std::string username;
+
+    if (validateSession(sessionID, username))
     {
-        std::vector<unsigned char> svgData = dbManager.getSVG(fileName);
-        std::string svgDataStr(svgData.begin(), svgData.end());
-        json response = { {"svgData", svgDataStr} };
+        std::vector<std::string> fileList = dbManager.getFileList(username);
+        json response = { {"fileList", fileList} };
         ws->send(response.dump());
-        logMessage("SVG data for " + fileName + " sent to the client.");
+        logMessage("File list sent to user " + username);
     }
-    catch (const std::runtime_error& e)
+    else
     {
-        logMessage("Error retrieving SVG: " + std::string(e.what()), true);
-        ws->send(R"({"error": "File not found."})");
+        ws->send(R"({"error": "Unauthorized"})");
+        logMessage("Unauthorized attempt to access file list.", true);
     }
 }
 
-void handleMessage(DatabaseManager& dbManager, std::string_view message, auto* ws)
+void handleGetSVG(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
+{
+    std::string sessionID = payload["sessionID"];
+    std::string username;
+
+    if (validateSession(sessionID, username))
+    {
+        std::string fileName = payload["getFileByName"];
+        std::vector<unsigned char> svgData = dbManager.getSVG(fileName, username);
+
+        if (!svgData.empty())
+        {
+            std::string svgDataStr(svgData.begin(), svgData.end());
+            json response = { {"svgData", svgDataStr} };
+            ws->send(response.dump());
+            logMessage("SVG data for " + fileName + " sent to user " + username);
+        }
+        else
+        {
+            ws->send(R"({"error": "File not found."})");
+            logMessage("User " + username + " got empty result when trying to access file: " + fileName, true);
+        }
+    }
+    else
+    {
+        ws->send(R"({"error": "Unauthorized"})");
+        logMessage("Unauthorized attempt to retrieve SVG.", true);
+    }
+}
+
+
+void handleMessage(SVGDatabaseManager& dbManager, AuthDatabaseManager& authDbManager, std::string_view message, auto* ws)
 {
     try
     {
         auto payload = json::parse(message);
 
-        if (payload.contains("fileName") && payload.contains("svgData"))
+        if (payload.contains("login"))
         {
-            handleSaveSVG(dbManager, payload, ws);
+            handleLogin(authDbManager, payload, ws);
+        }
+        else if (payload.contains("logout"))
+        {
+            handleLogout(payload, ws);
         }
         else if (payload.contains("getFileList"))
         {
-            handleGetFileList(dbManager, ws);
+            handleGetFileList(dbManager, payload, ws);
         }
         else if (payload.contains("getFileByName"))
         {
@@ -115,19 +207,19 @@ void handleMessage(DatabaseManager& dbManager, std::string_view message, auto* w
         }
         else
         {
-            ws->send(R"({"error": "Invalid request."})");
+            ws->send(R"({"error": "Invalid request"})");
             logMessage("Invalid payload received.", true);
         }
     }
     catch (const json::exception& e)
     {
         logMessage("JSON parsing error: " + std::string(e.what()), true);
-        ws->send(R"({"error": "Error parsing JSON."})");
+        ws->send(R"({"error": "Error parsing JSON"})");
     }
     catch (const std::exception& e)
     {
         logMessage("Unexpected error: " + std::string(e.what()), true);
-        ws->send(R"({"error": "Internal server error."})");
+        ws->send(R"({"error": "Internal server error"})");
     }
 }
 
@@ -135,7 +227,8 @@ void run_server()
 {
     try
     {
-        DatabaseManager dbManager("svg_database.db");
+        SVGDatabaseManager dbManager;
+        AuthDatabaseManager authDbManager;
 
         uWS::App()
             .ws<PerConnectionData>("/*", {
@@ -143,10 +236,10 @@ void run_server()
                 {
                     logMessage("Connection opened.");
                 },
-                .message = [&dbManager](auto* ws, std::string_view message, uWS::OpCode opCode)
+                .message = [&dbManager, &authDbManager](auto* ws, std::string_view message, uWS::OpCode opCode)
                 {
                     logMessage("Received message: " + std::string(message));
-                    handleMessage(dbManager, message, ws);
+                    handleMessage(dbManager, authDbManager, message, ws);
                 },
                 .close = [](auto* ws, int code, std::string_view message)
                 {
