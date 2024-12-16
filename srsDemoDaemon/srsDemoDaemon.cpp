@@ -98,110 +98,152 @@ void removeSession(const std::string& sessionID)
 
 void handleLogin(AuthDatabaseManager& authDbManager, const json& payload, auto* ws)
 {
-    std::string username = payload["username"];
-    std::string password = payload["password"];
+    std::string username = payload["username"].is_null() ? "" : payload.value("username", "");
+    std::string password = payload["password"].is_null() ? "" : payload.value("password", "");
 
     if (authDbManager.validateUser(username, password))
     {
         std::string sessionID = generateSessionID();
         addSession(sessionID, username);
-        json response = { {"sessionID", sessionID}, {"message", "Login successful"} };
-        ws->send(response.dump());
+        json response = {
+            {"action", "login"},
+            {"sessionId", sessionID},
+            {"username", username},
+            {"message", "Login successful"}
+        };
+        ws->send(response.dump(), uWS::OpCode::TEXT);
         logMessage("User " + username + " logged in successfully.");
     }
     else
     {
-        ws->send(R"({"error": "Invalid credentials"})");
+        ws->send(R"({"action": "login", "error": "Invalid credentials"})", uWS::OpCode::TEXT);
         logMessage("Failed login attempt for user " + username, true);
     }
 }
 
 void handleLogout(const json& payload, auto* ws)
 {
-    std::string sessionID = payload["sessionID"];
+    std::string sessionID = payload["sessionId"].is_null() ? "" : payload.value("sessionId", "");
 
     if (!sessionID.empty())
     {
         removeSession(sessionID);
-        ws->send(R"({"message": "Logout successful"})");
+        json response = { {"action", "logout"}, {"message", "Logout successful"} };
+        ws->send(response.dump(), uWS::OpCode::TEXT);
         logMessage("Session " + sessionID + " logged out.");
     }
     else
     {
-        ws->send(R"({"error": "Invalid session"})");
+        ws->send(R"({"action": "logout", "error": "Invalid session"})", uWS::OpCode::TEXT);
         logMessage("Logout attempt failed due to missing session ID.", true);
     }
 }
 
+
 void handleCreateUser(AuthDatabaseManager& authDbManager, const json& payload, auto* ws)
 {
-    std::string username = payload["username"];
-    std::string password = payload["password"];
+    std::string username = payload["username"].is_null() ? "" : payload.value("username", "");
+    std::string password = payload["password"].is_null() ? "" : payload.value("password", "");
 
     if (authDbManager.createUser(username, password))
     {
         std::string sessionID = generateSessionID();
         addSession(sessionID, username);
-        json response = { {"sessionID", sessionID}, {"message", "Registration successful."} };
-        ws->send(response.dump());
+        json response = {
+            {"action", "createUser"},
+            {"sessionId", sessionID},
+            {"username", username},
+            {"message", "Registration successful."}
+        };
+        ws->send(response.dump(), uWS::OpCode::TEXT);
         logMessage("User " + username + " created successfully.");
     }
     else
     {
-        ws->send(R"({"error": "User already exists."})");
+        ws->send(R"({"action": "createUser", "error": "User already exists."})", uWS::OpCode::TEXT);
         logMessage("Failed registration attempt for user " + username, true);
     }
 }
 
 void handleGetFileList(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
 {
-    std::string sessionID = payload["sessionID"];
+    std::string sessionID = payload["sessionId"].is_null() ? "" : payload.value("sessionId", "");
     std::string username;
 
     if (validateSession(sessionID, username))
     {
         std::vector<std::string> fileList = dbManager.getFileList(username);
-        json response = { {"fileList", fileList} };
-        ws->send(response.dump());
+        json response = { {"action", "fileList"}, {"fileList", fileList} };
+        ws->send(response.dump(), uWS::OpCode::TEXT);
         logMessage("File list sent to user " + username);
     }
     else
     {
-        ws->send(R"({"error": "Unauthorized"})");
+        ws->send(R"({"action": "fileList", "error": "Unauthorized"})", uWS::OpCode::TEXT);
         logMessage("Unauthorized attempt to access file list.", true);
     }
 }
 
 void handleGetSVG(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
 {
-    std::string sessionID = payload["sessionID"];
+    std::string sessionID = payload["sessionId"].is_null() ? "" : payload.value("sessionId", "");
     std::string username;
 
     if (validateSession(sessionID, username))
     {
-        std::string fileName = payload["getFileByName"];
+        std::string fileName = payload["fileName"].is_null() ? "" : payload.value("fileName", "");
         std::vector<unsigned char> svgData = dbManager.getSVG(fileName, username);
 
         if (!svgData.empty())
         {
             std::string svgDataStr(svgData.begin(), svgData.end());
-            json response = { {"svgData", svgDataStr} };
-            ws->send(response.dump());
+            json response = { {"action", "svgData"}, {"svgData", svgDataStr} };
+            ws->send(response.dump(), uWS::OpCode::TEXT);
             logMessage("SVG data for " + fileName + " sent to user " + username);
         }
         else
         {
-            ws->send(R"({"error": "File not found."})");
+            ws->send(R"({"action": "svgData", "error": "File not found."})", uWS::OpCode::TEXT);
             logMessage("User " + username + " got empty result when trying to access file: " + fileName, true);
         }
     }
     else
     {
-        ws->send(R"({"error": "Unauthorized"})");
+        ws->send(R"({"action": "svgData", "error": "Unauthorized"})", uWS::OpCode::TEXT);
         logMessage("Unauthorized attempt to retrieve SVG.", true);
     }
 }
 
+void handleSaveSVG(SVGDatabaseManager& dbManager, const json& payload, auto* ws)
+{
+    std::string sessionID = payload["sessionId"].is_null() ? "" : payload.value("sessionId", "");
+    std::string username;
+
+    if (validateSession(sessionID, username))
+    {
+        std::string fileName = payload["fileName"].is_null() ? "" : payload.value("fileName", "");
+        std::string svgDataStr = payload["svgData"].is_null() ? "" : payload.value("svgData", "");
+
+        std::vector<unsigned char> svgDataVec(svgDataStr.begin(), svgDataStr.end());
+
+        try
+        {
+            dbManager.saveSVG(fileName, username, svgDataVec);
+            ws->send(R"({"success": "SVG saved successfully"})", uWS::OpCode::TEXT);
+            logMessage("SVG file '" + fileName + "' saved for user: " + username);
+        }
+        catch (const std::exception& e)
+        {
+            ws->send(R"({"error": "Failed to save SVG"})", uWS::OpCode::TEXT);
+            logMessage("Error saving SVG for user " + username + ": " + std::string(e.what()), true);
+        }
+    }
+    else
+    {
+        ws->send(R"({"error": "Unauthorized"})", uWS::OpCode::TEXT);
+        logMessage("Unauthorized attempt to save SVG.", true);
+    }
+}
 
 void handleMessage(SVGDatabaseManager& dbManager, AuthDatabaseManager& authDbManager, std::string_view message, auto* ws)
 {
@@ -209,41 +251,46 @@ void handleMessage(SVGDatabaseManager& dbManager, AuthDatabaseManager& authDbMan
     {
         auto payload = json::parse(message);
 
-        if (payload.contains("login"))
-        {
+        if (!payload.contains("action")) {
+            ws->send(R"({"error": "Missing 'action' field in payload"})", uWS::OpCode::TEXT);
+            logMessage("Missing 'action' in payload.", true);
+            return;
+        }
+
+        std::string action = payload["action"];
+
+        if (action == "login") {
             handleLogin(authDbManager, payload, ws);
         }
-        else if (payload.contains("logout"))
-        {
+        else if (action == "logout") {
             handleLogout(payload, ws);
         }
-        else if (payload.contains("createUser"))
-        {
+        else if (action == "createUser") {
             handleCreateUser(authDbManager, payload, ws);
         }
-        else if (payload.contains("getFileList"))
-        {
+        else if (action == "getFileList") {
             handleGetFileList(dbManager, payload, ws);
         }
-        else if (payload.contains("getFileByName"))
-        {
+        else if (action == "getFileByName") {
             handleGetSVG(dbManager, payload, ws);
         }
-        else
-        {
-            ws->send(R"({"error": "Invalid request"})");
-            logMessage("Invalid payload received.", true);
+        else if (action == "saveSVG") {
+            handleSaveSVG(dbManager, payload, ws);
+        }
+        else {
+            ws->send(R"({"error": "Invalid action"})", uWS::OpCode::TEXT);
+            logMessage("Invalid action received: " + action, true);
         }
     }
     catch (const json::exception& e)
     {
         logMessage("JSON parsing error: " + std::string(e.what()), true);
-        ws->send(R"({"error": "Error parsing JSON"})");
+        ws->send(R"({"error": "Error parsing JSON"})", uWS::OpCode::TEXT);
     }
     catch (const std::exception& e)
     {
         logMessage("Unexpected error: " + std::string(e.what()), true);
-        ws->send(R"({"error": "Internal server error"})");
+        ws->send(R"({"error": "Internal server error"})", uWS::OpCode::TEXT);
     }
 }
 

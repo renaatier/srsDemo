@@ -1,7 +1,7 @@
 import React, { useRef } from "react";
 import Canvas from "./components/Canvas";
 import AuthForm from "./components/AuthForm";
-import { AuthProvider } from "./context/AuthContext";
+import { WebSocketProvider } from "./context/WebSocketContext";
 import { useWebSocket } from "./context/WebSocketContext";
 
 const App = () => {
@@ -21,7 +21,7 @@ const App = () => {
     };
 
     return (
-        <AuthProvider>
+        <WebSocketProvider>
             <div>
                 <h1>SVG Editor</h1>
                 <AuthForm />
@@ -50,7 +50,7 @@ const App = () => {
                     </div>
                 )}
             </div>
-        </AuthProvider>
+        </WebSocketProvider>
     );
 };
 

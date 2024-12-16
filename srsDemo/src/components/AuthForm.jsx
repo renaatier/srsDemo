@@ -1,14 +1,23 @@
 import React, { useState } from "react";
-import { useAuth } from "../context/AuthContext";
+import { useWebSocket } from "../context/WebSocketContext";
 
 const AuthForm = () => {
-    const { user, login, logout, isLoggedIn } = useAuth();
+    const { user, isLoggedIn, login, logout, register } = useWebSocket();
     const [username, setUsername] = useState("");
     const [password, setPassword] = useState("");
+    const [registerMessage, setRegisterMessage] = useState("");
 
     const handleLogin = () => {
         if (username && password) {
             login(username, password);
+        } else {
+            alert("Please enter both username and password.");
+        }
+    };
+
+    const handleRegister = () => {
+        if (username && password) {
+            register(username, password, setRegisterMessage);
         } else {
             alert("Please enter both username and password.");
         }
@@ -35,7 +44,15 @@ const AuthForm = () => {
                         value={password}
                         onChange={(e) => setPassword(e.target.value)}
                     />
-                    <button onClick={handleLogin}>Login</button>
+                    <div style={{ marginTop: "10px" }}>
+                        <button onClick={handleLogin}>Login</button>
+                        <button onClick={handleRegister} style={{ marginLeft: "10px" }}>
+                            Register
+                        </button>
+                    </div>
+                    {registerMessage && (
+                        <p style={{ color: "green", marginTop: "10px" }}>{registerMessage}</p>
+                    )}
                 </div>
             )}
         </div>

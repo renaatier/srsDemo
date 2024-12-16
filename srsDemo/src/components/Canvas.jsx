@@ -4,11 +4,32 @@ import { useWebSocket } from "../context/WebSocketContext";
 
 const Canvas = () => {
     const { svgData } = useWebSocket();
-    const [shapes, setShapes] = useState([]);
+
+    const defaultShapes = [
+        {
+            id: "circle-1",
+            type: "circle",
+            x: 100,
+            y: 100,
+            r: 50,
+            fill: "blue",
+        },
+        {
+            id: "rect-1",
+            type: "rectangle",
+            x: 300,
+            y: 200,
+            width: 100,
+            height: 100,
+            fill: "green",
+        },
+    ];
+
+    const [shapes, setShapes] = useState(defaultShapes);
 
     useEffect(() => {
         if (svgData) {
-            const parsedShapes = JSON.parse(svgData); // Ensure SVG is parsed to shapes
+            const parsedShapes = JSON.parse(svgData);
             setShapes(parsedShapes);
         }
     }, [svgData]);
@@ -29,3 +50,4 @@ const Canvas = () => {
 };
 
 export default Canvas;
+

@@ -1,15 +1,16 @@
-import React from 'react';
-import Rectangle from './Rectangle';
-import Circle from './Circle';
+import React from "react";
+import Circle from "./Circle";
+import Rectangle from "./Rectangle";
 
 const ShapeRenderer = ({ shape, onUpdate }) => {
-    if (shape.type === 'rect') {
-        return <Rectangle shape={shape} onUpdate={onUpdate} />;
+    switch (shape.type) {
+        case "circle":
+            return <Circle shape={shape} onUpdate={onUpdate} />;
+        case "rectangle":
+            return <Rectangle shape={shape} onUpdate={onUpdate} />;
+        default:
+            return null;
     }
-    if (shape.type === 'circle') {
-        return <Circle shape={shape} onUpdate={onUpdate} />;
-    }
-    return null;
 };
 
 export default ShapeRenderer;
